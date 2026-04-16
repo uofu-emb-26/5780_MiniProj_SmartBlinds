@@ -33,14 +33,23 @@ add_subdirectory(Drivers)
 
 include(flash_stm32)
 
-# Add labs subprojects
-# add_subdirectory(lab1)
-# add_subdirectory(lab2)
-# add_subdirectory(lab3)
-# add_subdirectory(lab4)
-# add_subdirectory(lab5)
-# add_subdirectory(lab6)
-# add_subdirectory(lab7)
+# Smart Blinds executable
+add_executable(smart_blinds
+    Core/Src/main.c
+    Core/Src/motor.c
+    Core/Src/adc.c
+    Core/Src/uart.c
+)
+
+target_link_libraries(smart_blinds PRIVATE
+    STM32_Drivers
+    STM32_Discovery
+    SEGGER_RTT
+    ${TOOLCHAIN_LINK_LIBRARIES}
+)
+
+# Flash target: build and flash via `cmake --build build --target flash_smart_blinds`
+flash_target(smart_blinds)
 
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)

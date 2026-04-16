@@ -7,6 +7,7 @@
 
 void SystemClock_Config(void);
 void Error_Handler(void);
+void SysTick_Handler(void);
 
 typedef enum {
   STATE_STOP,
@@ -22,9 +23,19 @@ typedef enum {
 #define USER_BTN_PORT GPIOC
 #define USER_BTN_PIN  GPIO_IDR_13
 
-/* LIGHT THRESHOLDS (can be changed) */
-#define LIGHT_OPEN_THRESHOLD   400
-#define LIGHT_CLOSE_THRESHOLD  700
+/* LIGHT THRESHOLDS (can be changed)
+ * Higher ADC value = brighter light
+ * Bright (above 700) -> open blinds
+ * Dark  (below 400)  -> close blinds */
+#define LIGHT_OPEN_THRESHOLD   700
+#define LIGHT_CLOSE_THRESHOLD  400
+
+/* Discovery board LEDs: PC6=RED, PC7=BLUE, PC8=ORANGE, PC9=GREEN */
+#define LED_RED_PIN    (1U << 6)
+#define LED_BLUE_PIN   (1U << 7)
+#define LED_ORANGE_PIN (1U << 8)
+#define LED_GREEN_PIN  (1U << 9)
+#define LED_ALL_PINS   (LED_RED_PIN | LED_BLUE_PIN | LED_ORANGE_PIN | LED_GREEN_PIN)
 
 int main(void)
 {
@@ -41,7 +52,14 @@ int main(void)
     ADC_Init_Custom();
     UART2_Init_Custom();
 
-    // PA0 -> Light Sensor (ADC) 
+    /* LED pins PC6-PC9 as outputs */
+    GPIOC->MODER &= ~(GPIO_MODER_MODER6_Msk | GPIO_MODER_MODER7_Msk |
+                       GPIO_MODER_MODER8_Msk | GPIO_MODER_MODER9_Msk);
+    GPIOC->MODER |=  (GPIO_MODER_MODER6_0 | GPIO_MODER_MODER7_0 |
+                       GPIO_MODER_MODER8_0 | GPIO_MODER_MODER9_0);
+    GPIOC->ODR &= ~LED_ALL_PINS; /* all LEDs off */
+
+    // PA0 -> Light Sensor (ADC)
     GPIOA->MODER &= ~GPIO_MODER_MODER0_Msk;
     GPIOA->MODER |= GPIO_MODER_MODER0; // analog mode
 
@@ -55,28 +73,39 @@ int main(void)
     GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR0_Msk | GPIO_PUPDR_PUPDR1_Msk | GPIO_PUPDR_PUPDR2_Msk);
     GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR0_0 | GPIO_PUPDR_PUPDR1_0 | GPIO_PUPDR_PUPDR2_0); // pull-up
 
-    // PB10, PB11 -> Limit Switches 
+    // PB10, PB11 -> Limit Switches
     GPIOB->MODER &= ~(GPIO_MODER_MODER10_Msk | GPIO_MODER_MODER11_Msk);
     GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR10_Msk | GPIO_PUPDR_PUPDR11_Msk);
     GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR10_0 | GPIO_PUPDR_PUPDR11_0); // pull-up
 
-    // User button input (change pin if needed)
+    // User button input
     USER_BTN_PORT->MODER &= ~(0x3u << (13 * 2)); // input mode for PC13
     USER_BTN_PORT->PUPDR &= ~(0x3u << (13 * 2)); // no pull
 
-    // PA6 -> PWM (TIM3_CH1 alternate function) 
+    // PA6 -> PWM (TIM3_CH1 alternate function)
     GPIOA->MODER &= ~GPIO_MODER_MODER6_Msk;
     GPIOA->MODER |= GPIO_MODER_MODER6_1; // alternate function
     GPIOA->AFR[0] &= ~(0xF << (6 * 4));
     GPIOA->AFR[0] |= (1 << (6 * 4)); // AF1 for TIM3_CH1 on many F0 parts
 
-    // PA2/PA3 -> UART2 
+    /* TIM3 CH1 PWM setup
+     * HSI = 8 MHz, PSC = 7 -> timer counts at 1 MHz
+     * ARR = 999 -> 1 kHz PWM frequency (1 MHz / 1000)
+     * motor_open/close set CCR1 to control duty cycle */
+    TIM3->PSC  = 7;       // 8 MHz / (7+1) = 1 MHz tick
+    TIM3->ARR  = 999;     // 1 MHz / (999+1) = 1 kHz PWM
+    TIM3->CCR1 = 0;       // start with 0% duty (motor off)
+    TIM3->CCMR1 = (6 << TIM_CCMR1_OC1M_Pos) | TIM_CCMR1_OC1PE; // PWM mode 1 + preload
+    TIM3->CCER = TIM_CCER_CC1E;  // enable CH1 output
+    TIM3->CR1  = TIM_CR1_CEN;    // start timer
+
+    // PA2/PA3 -> UART2
     GPIOA->MODER &= ~(GPIO_MODER_MODER2_Msk | GPIO_MODER_MODER3_Msk);
     GPIOA->MODER |= (GPIO_MODER_MODER2_1 | GPIO_MODER_MODER3_1); // alternate function
     GPIOA->AFR[0] &= ~((0xF << (2 * 4)) | (0xF << (3 * 4)));
     GPIOA->AFR[0] |=  ((1 << (2 * 4)) | (1 << (3 * 4))); // AF1 USART2
 
-    // PB6/PB7 -> I2C1 
+    // PB6/PB7 -> I2C1
     GPIOB->MODER &= ~(GPIO_MODER_MODER6_Msk | GPIO_MODER_MODER7_Msk);
     GPIOB->MODER |= (GPIO_MODER_MODER6_1 | GPIO_MODER_MODER7_1); // alternate function
     GPIOB->OTYPER |= (GPIO_OTYPER_OT_6 | GPIO_OTYPER_OT_7); // open-drain
@@ -85,7 +114,7 @@ int main(void)
 
 
     /* I2C1 CONFIG */
- 
+
     I2C1->CR1 &= ~I2C_CR1_PE;
     I2C1->TIMINGR = 0x2000090E; // common timing value for 48MHz / 100kHz
     I2C1->CR1 |= I2C_CR1_PE;
@@ -149,15 +178,15 @@ int main(void)
                       }
                   }
               }
-              else // AUTO mode
+              else // AUTO mode: bright -> open, dark -> close
               {
-                  if ((light > LIGHT_CLOSE_THRESHOLD) && !close_limit)
-                  {
-                      state = STATE_CLOSING;
-                  }
-                  else if ((light < LIGHT_OPEN_THRESHOLD) && !open_limit)
+                  if ((light > LIGHT_OPEN_THRESHOLD) && !open_limit)
                   {
                       state = STATE_OPENING;
+                  }
+                  else if ((light < LIGHT_CLOSE_THRESHOLD) && !close_limit)
+                  {
+                      state = STATE_CLOSING;
                   }
               }
               break;
@@ -192,6 +221,29 @@ int main(void)
               motor_close();
               break;
       }
+
+      /* LED feedback:
+       *   GREEN  = heartbeat (toggles each loop)
+       *   BLUE   = AUTO mode
+       *   ORANGE = motor opening
+       *   RED    = motor closing
+       */
+      GPIOC->ODR ^= LED_GREEN_PIN;
+
+      if (mode == MODE_AUTO)
+          GPIOC->ODR |= LED_BLUE_PIN;
+      else
+          GPIOC->ODR &= ~LED_BLUE_PIN;
+
+      if (state == STATE_OPENING)
+          GPIOC->ODR |= LED_ORANGE_PIN;
+      else
+          GPIOC->ODR &= ~LED_ORANGE_PIN;
+
+      if (state == STATE_CLOSING)
+          GPIOC->ODR |= LED_RED_PIN;
+      else
+          GPIOC->ODR &= ~LED_RED_PIN;
 
       /* UART debug output */
       snprintf(msg, sizeof(msg),
@@ -244,4 +296,9 @@ int main(void)
 
     }
 
+    }
+
+    void SysTick_Handler(void)
+    {
+        HAL_IncTick();
     }
