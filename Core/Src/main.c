@@ -1,9 +1,12 @@
 #include "main.h"
 #include <stdio.h>
 #include <string.h>
+#include "motor.h"
 
 void SystemClock_Config(void);
 void Error_Handler(void);
+
+
 
 int main(void)
 {
@@ -102,9 +105,34 @@ int main(void)
 
     while (1)
     {
+      uint8_t open_btn  = ((GPIOB->IDR & GPIO_IDR_0) == 0);
+      uint8_t close_btn = ((GPIOB->IDR & GPIO_IDR_1) == 0);
+      uint8_t stop_btn  = ((GPIOB->IDR & GPIO_IDR_2) == 0);
+
+      uint8_t open_limit  = ((GPIOB->IDR & GPIO_IDR_10) == 0);
+      uint8_t close_limit = ((GPIOB->IDR & GPIO_IDR_11) == 0);
+
+      if (stop_btn)
+      {
+          motor_stop();
+      }
+      else if (open_btn && !open_limit)
+      {
+          motor_open();
+      }
+      else if (close_btn && !close_limit)
+      {
+          motor_close();
+      }
+      else
+      {
+          motor_stop();
+      }
+
+      HAL_Delay(200);
     }
 
-
+    }
     /**
     * @brief System Clock Configuration
     * @retval None
