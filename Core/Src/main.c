@@ -6,7 +6,11 @@
 void SystemClock_Config(void);
 void Error_Handler(void);
 
-
+typedef enum {
+  STATE_STOP,
+  STATE_OPENING,
+  STATE_CLOSING
+  } State_t;
 
 int main(void)
 {
@@ -103,6 +107,8 @@ int main(void)
     I2C1->TIMINGR = 0x2000090E; // common timing value for 48MHz / 100kHz
     I2C1->CR1 |= I2C_CR1_PE;
 
+    State_t state = STATE_STOP;
+
     while (1)
     {
       uint8_t open_btn  = ((GPIOB->IDR & GPIO_IDR_0) == 0);
@@ -112,27 +118,44 @@ int main(void)
       uint8_t open_limit  = ((GPIOB->IDR & GPIO_IDR_10) == 0);
       uint8_t close_limit = ((GPIOB->IDR & GPIO_IDR_11) == 0);
 
-      if (stop_btn)
+      switch (state)
       {
-          motor_stop();
-      }
-      else if (open_btn && !open_limit)
-      {
-          motor_open();
-      }
-      else if (close_btn && !close_limit)
-      {
-          motor_close();
-      }
-      else
-      {
-          motor_stop();
+        case STATE_STOP:
+            if (open_btn && !open_limit)
+                state = STATE_OPENING;
+            else if (close_btn && !close_limit)
+                state = STATE_CLOSING;
+            break;
+
+          case STATE_OPENING:
+            if (stop_btn || open_limit)
+                state = STATE_STOP;
+            break;
+
+          case STATE_CLOSING:
+            if (stop_btn || close_limit)
+              state = STATE_STOP;
+            break;
       }
 
+      switch (state)
+     {
+        case STATE_STOP:
+          motor_stop();
+          break;
+
+        case STATE_OPENING:
+          motor_open();
+          break;
+
+        case STATE_CLOSING:
+          motor_close();
+          break;
+     }
       HAL_Delay(200);
     }
+  }
 
-    }
     /**
     * @brief System Clock Configuration
     * @retval None
