@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "motor.h"
+#include "adc.h"
+#include "uart.h"
 
 void SystemClock_Config(void);
 void Error_Handler(void);
@@ -12,6 +14,18 @@ typedef enum {
   STATE_CLOSING
   } State_t;
 
+  typedef enum {
+    MODE_MANUAL,
+    MODE_AUTO
+} Mode_t;
+/* USER BUTTON PIN */
+#define USER_BTN_PORT GPIOC
+#define USER_BTN_PIN  GPIO_IDR_13
+
+/* LIGHT THRESHOLDS (can be changed) */
+#define LIGHT_OPEN_THRESHOLD   400
+#define LIGHT_CLOSE_THRESHOLD  700
+
 int main(void)
 {
     HAL_Init();
@@ -20,22 +34,23 @@ int main(void)
     /* Enable clocks */
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
-    __HAL_RCC_USART2_CLK_ENABLE();
-    __HAL_RCC_ADC1_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
     __HAL_RCC_TIM3_CLK_ENABLE();
     __HAL_RCC_I2C1_CLK_ENABLE();
 
-    /* GPIO Configuration */
+    ADC_Init_Custom();
+    UART2_Init_Custom();
 
     // PA0 -> Light Sensor (ADC) 
     GPIOA->MODER &= ~GPIO_MODER_MODER0_Msk;
-    GPIOA->MODER |= GPIO_MODER_MODER0;   // analog mode
+    GPIOA->MODER |= GPIO_MODER_MODER0; // analog mode
 
     // PA7 -> DIR output
     GPIOA->MODER &= ~GPIO_MODER_MODER7_Msk;
     GPIOA->MODER |= GPIO_MODER_MODER7_0;
 
-    // PB0, PB1, PB2 -> Buttons 
+    // PB0: Manual Open/Close command button
+    // PB2: Stop button
     GPIOB->MODER &= ~(GPIO_MODER_MODER0_Msk | GPIO_MODER_MODER1_Msk | GPIO_MODER_MODER2_Msk);
     GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR0_Msk | GPIO_PUPDR_PUPDR1_Msk | GPIO_PUPDR_PUPDR2_Msk);
     GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR0_0 | GPIO_PUPDR_PUPDR1_0 | GPIO_PUPDR_PUPDR2_0); // pull-up
@@ -44,6 +59,10 @@ int main(void)
     GPIOB->MODER &= ~(GPIO_MODER_MODER10_Msk | GPIO_MODER_MODER11_Msk);
     GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR10_Msk | GPIO_PUPDR_PUPDR11_Msk);
     GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR10_0 | GPIO_PUPDR_PUPDR11_0); // pull-up
+
+    // User button input (change pin if needed)
+    USER_BTN_PORT->MODER &= ~(0x3u << (13 * 2)); // input mode for PC13
+    USER_BTN_PORT->PUPDR &= ~(0x3u << (13 * 2)); // no pull
 
     // PA6 -> PWM (TIM3_CH1 alternate function) 
     GPIOA->MODER &= ~GPIO_MODER_MODER6_Msk;
@@ -65,42 +84,6 @@ int main(void)
     GPIOB->AFR[0] |=  ((1 << (6 * 4)) | (1 << (7 * 4))); // AF1 I2C1
 
 
-    /* ADC Configuration */
-    ADC1->CFGR1 = 0; // single conversion, 12-bit default
-    ADC1->CHSELR = ADC_CHSELR_CHSEL0; // channel 0 -> PA0
-    ADC1->SMPR |= ADC_SMPR_SMP_2 | ADC_SMPR_SMP_1 | ADC_SMPR_SMP_0;
-
-    ADC1->ISR |= (ADC_ISR_ADRDY | ADC_ISR_EOC | ADC_ISR_EOSEQ | ADC_ISR_OVR);
-
-    ADC1->CR |= ADC_CR_ADCAL;
-    while (ADC1->CR & ADC_CR_ADCAL) {
-
-    }
-
-    ADC1->CR |= ADC_CR_ADEN;
-    while (!(ADC1->ISR & ADC_ISR_ADRDY)) {
-
-    }
-
-    /* UART2 Configuration */
-    USART2->CR1 = 0;
-    USART2->BRR = HAL_RCC_GetHCLKFreq() / 115200;
-    USART2->CR1 |= USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
-
-    /* TIM3 PWM Configuration */
-    TIM3->PSC = 47; // 48 MHz / (47+1) = 1 MHz timer clock
-    TIM3->ARR = 999; // PWM period = 1000 counts -> 1 kHz
-    TIM3->CCR1 = 0; // start stopped
-
-    TIM3->CCMR1 &= ~TIM_CCMR1_OC1M;
-    TIM3->CCMR1 |= (6 << TIM_CCMR1_OC1M_Pos);  // PWM mode 1
-    TIM3->CCMR1 |= TIM_CCMR1_OC1PE;
-    TIM3->CCER |= TIM_CCER_CC1E;
-    TIM3->CR1 |= TIM_CR1_ARPE;
-    TIM3->EGR |= TIM_EGR_UG;
-    TIM3->CR1 |= TIM_CR1_CEN;
-
-
     /* I2C1 CONFIG */
  
     I2C1->CR1 &= ~I2C_CR1_PE;
@@ -108,53 +91,119 @@ int main(void)
     I2C1->CR1 |= I2C_CR1_PE;
 
     State_t state = STATE_STOP;
+    Mode_t mode = MODE_MANUAL;
+
+    uint8_t last_user_btn = 1; // active-low button, released = 1
+    uint8_t motion_toggle = 0; // 0 -> next press opens, 1 -> next press closes
+
+    char msg[128];
 
     while (1)
-    {
-      uint8_t open_btn  = ((GPIOB->IDR & GPIO_IDR_0) == 0);
-      uint8_t close_btn = ((GPIOB->IDR & GPIO_IDR_1) == 0);
-      uint8_t stop_btn  = ((GPIOB->IDR & GPIO_IDR_2) == 0);
+  {
+      uint16_t light = ADC_Read();
+
+      uint8_t motion_btn = ((GPIOB->IDR & GPIO_IDR_0) == 0); // PB0
+      uint8_t stop_btn   = ((GPIOB->IDR & GPIO_IDR_2) == 0); // PB2
 
       uint8_t open_limit  = ((GPIOB->IDR & GPIO_IDR_10) == 0);
       uint8_t close_limit = ((GPIOB->IDR & GPIO_IDR_11) == 0);
 
+      uint8_t user_btn = ((USER_BTN_PORT->IDR & USER_BTN_PIN) == 0);
+
+      /* Toggle AUTO/MANUAL on user button press */
+      if (user_btn && !last_user_btn)
+      {
+          mode = (mode == MODE_MANUAL) ? MODE_AUTO : MODE_MANUAL;
+
+          snprintf(msg, sizeof(msg),
+                  "Mode changed: %s\r\n",
+                  (mode == MODE_MANUAL) ? "MANUAL" : "AUTO");
+
+          UART2_SendString(msg);
+
+          HAL_Delay(250); // simple debounce
+      }
+      last_user_btn = user_btn;
+
+      /* FSM transition logic */
       switch (state)
       {
-        case STATE_STOP:
-            if (open_btn && !open_limit)
-                state = STATE_OPENING;
-            else if (close_btn && !close_limit)
-                state = STATE_CLOSING;
-            break;
+          case STATE_STOP:
+              if (stop_btn)
+              {
+                  state = STATE_STOP;
+              }
+              else if (mode == MODE_MANUAL)
+              {
+                  if (motion_btn)
+                  {
+                      if (!motion_toggle && !open_limit)
+                      {
+                          state = STATE_OPENING;
+                          motion_toggle = 1;
+                      }
+                      else if (motion_toggle && !close_limit)
+                      {
+                          state = STATE_CLOSING;
+                          motion_toggle = 0;
+                      }
+                  }
+              }
+              else // AUTO mode
+              {
+                  if ((light > LIGHT_CLOSE_THRESHOLD) && !close_limit)
+                  {
+                      state = STATE_CLOSING;
+                  }
+                  else if ((light < LIGHT_OPEN_THRESHOLD) && !open_limit)
+                  {
+                      state = STATE_OPENING;
+                  }
+              }
+              break;
 
           case STATE_OPENING:
-            if (stop_btn || open_limit)
-                state = STATE_STOP;
-            break;
+              if (stop_btn || open_limit)
+              {
+                  state = STATE_STOP;
+              }
+              break;
 
           case STATE_CLOSING:
-            if (stop_btn || close_limit)
-              state = STATE_STOP;
-            break;
+              if (stop_btn || close_limit)
+              {
+                  state = STATE_STOP;
+              }
+              break;
       }
 
+      /* FSM output logic */
       switch (state)
-     {
-        case STATE_STOP:
-          motor_stop();
-          break;
+      {
+          case STATE_STOP:
+              motor_stop();
+              break;
 
-        case STATE_OPENING:
-          motor_open();
-          break;
+          case STATE_OPENING:
+              motor_open();
+              break;
 
-        case STATE_CLOSING:
-          motor_close();
-          break;
-     }
+          case STATE_CLOSING:
+              motor_close();
+              break;
+      }
+
+      /* UART debug output */
+      snprintf(msg, sizeof(msg),
+              "Mode=%s State=%d Light=%u MotionBtn=%u StopBtn=%u OpenLim=%u CloseLim=%u\r\n",
+              (mode == MODE_MANUAL) ? "MANUAL" : "AUTO",
+              state, light, motion_btn, stop_btn, open_limit, close_limit);
+
+      UART2_SendString(msg);
       HAL_Delay(200);
-    }
   }
+}
+
 
     /**
     * @brief System Clock Configuration
@@ -196,4 +245,3 @@ int main(void)
     }
 
     }
-}
