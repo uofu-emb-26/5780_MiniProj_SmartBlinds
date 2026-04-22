@@ -39,6 +39,7 @@ add_executable(smart_blinds
     Core/Src/motor.c
     Core/Src/adc.c
     Core/Src/uart.c
+    Core/Src/lcd.c
 )
 
 target_link_libraries(smart_blinds PRIVATE

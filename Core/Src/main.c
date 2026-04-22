@@ -20,9 +20,9 @@ typedef enum {
     MODE_MANUAL,
     MODE_AUTO
 } Mode_t;
-/* USER BUTTON PIN */
-#define USER_BTN_PORT GPIOC
-#define USER_BTN_PIN  GPIO_IDR_13
+/* USER BUTTON PIN - onboard B1 on STM32F0-Discovery, active-HIGH */
+#define USER_BTN_PORT GPIOA
+#define USER_BTN_PIN  GPIO_IDR_0
 
 /* LIGHT THRESHOLDS (can be changed)
  * Higher ADC value = brighter light
@@ -60,9 +60,11 @@ int main(void)
                        GPIO_MODER_MODER8_0 | GPIO_MODER_MODER9_0);
     GPIOC->ODR &= ~LED_ALL_PINS; /* all LEDs off */
 
-    // PA0 -> Light Sensor (ADC)
-    GPIOA->MODER &= ~GPIO_MODER_MODER0_Msk;
-    GPIOA->MODER |= GPIO_MODER_MODER0; // analog mode
+    // PA0 -> User button (B1 on Discovery board, active-high with external pull-down)
+    GPIOA->MODER &= ~GPIO_MODER_MODER0_Msk; // input
+    GPIOA->PUPDR &= ~GPIO_PUPDR_PUPDR0_Msk; // no pull (board has external pull-down)
+
+    // PA1 -> Light Sensor (ADC) - configured in ADC_Init_Custom
 
     // PA7 -> DIR output
     GPIOA->MODER &= ~GPIO_MODER_MODER7_Msk;
@@ -70,18 +72,14 @@ int main(void)
 
     // PB0: Manual Open/Close command button
     // PB2: Stop button
-    GPIOB->MODER &= ~(GPIO_MODER_MODER0_Msk | GPIO_MODER_MODER1_Msk | GPIO_MODER_MODER2_Msk);
-    GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR0_Msk | GPIO_PUPDR_PUPDR1_Msk | GPIO_PUPDR_PUPDR2_Msk);
-    GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR0_0 | GPIO_PUPDR_PUPDR1_0 | GPIO_PUPDR_PUPDR2_0); // pull-up
+    GPIOB->MODER &= ~(GPIO_MODER_MODER0_Msk | GPIO_MODER_MODER2_Msk);
+    GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR0_Msk | GPIO_PUPDR_PUPDR2_Msk);
+    GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR0_0 | GPIO_PUPDR_PUPDR2_0); // pull-up
 
     // PB10, PB11 -> Limit Switches
     GPIOB->MODER &= ~(GPIO_MODER_MODER10_Msk | GPIO_MODER_MODER11_Msk);
     GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR10_Msk | GPIO_PUPDR_PUPDR11_Msk);
     GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR10_0 | GPIO_PUPDR_PUPDR11_0); // pull-up
-
-    // User button input
-    USER_BTN_PORT->MODER &= ~(0x3u << (13 * 2)); // input mode for PC13
-    USER_BTN_PORT->PUPDR &= ~(0x3u << (13 * 2)); // no pull
 
     // PA6 -> PWM (TIM3_CH1 alternate function)
     GPIOA->MODER &= ~GPIO_MODER_MODER6_Msk;
@@ -125,7 +123,7 @@ int main(void)
     State_t state = STATE_STOP;
     Mode_t mode = MODE_MANUAL;
 
-    uint8_t last_user_btn = 1; // active-low button, released = 1
+    uint8_t last_user_btn = 0; // active-high button, released = 0
     uint8_t motion_toggle = 0; // 0 -> next press opens, 1 -> next press closes
 
     /* Sentinel values so the first iteration always refreshes the LCD */
@@ -144,7 +142,7 @@ int main(void)
       uint8_t open_limit  = ((GPIOB->IDR & GPIO_IDR_10) == 0);
       uint8_t close_limit = ((GPIOB->IDR & GPIO_IDR_11) == 0);
 
-      uint8_t user_btn = ((USER_BTN_PORT->IDR & USER_BTN_PIN) == 0);
+      uint8_t user_btn = ((USER_BTN_PORT->IDR & USER_BTN_PIN) != 0);
 
       /* Toggle AUTO/MANUAL on user button press */
       if (user_btn && !last_user_btn)
@@ -272,9 +270,9 @@ int main(void)
 
       /* UART debug output */
       snprintf(msg, sizeof(msg),
-              "Mode=%s State=%d Light=%u MotionBtn=%u StopBtn=%u OpenLim=%u CloseLim=%u\r\n",
+              "Mode=%s State=%d Light=%u UserBtn=%u MotionBtn=%u StopBtn=%u OpenLim=%u CloseLim=%u\r\n",
               (mode == MODE_MANUAL) ? "MANUAL" : "AUTO",
-              state, light, motion_btn, stop_btn, open_limit, close_limit);
+              state, light, user_btn, motion_btn, stop_btn, open_limit, close_limit);
 
       UART2_SendString(msg);
       HAL_Delay(200);
