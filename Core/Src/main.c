@@ -4,6 +4,7 @@
 #include "motor.h"
 #include "adc.h"
 #include "uart.h"
+#include "lcd.h"
 
 void SystemClock_Config(void);
 void Error_Handler(void);
@@ -119,11 +120,17 @@ int main(void)
     I2C1->TIMINGR = 0x2000090E; // common timing value for 48MHz / 100kHz
     I2C1->CR1 |= I2C_CR1_PE;
 
+    LCD_Init();
+
     State_t state = STATE_STOP;
     Mode_t mode = MODE_MANUAL;
 
     uint8_t last_user_btn = 1; // active-low button, released = 1
     uint8_t motion_toggle = 0; // 0 -> next press opens, 1 -> next press closes
+
+    /* Sentinel values so the first iteration always refreshes the LCD */
+    Mode_t  prev_mode  = (Mode_t)0xFF;
+    State_t prev_state = (State_t)0xFF;
 
     char msg[128];
 
@@ -244,6 +251,24 @@ int main(void)
           GPIOC->ODR |= LED_RED_PIN;
       else
           GPIOC->ODR &= ~LED_RED_PIN;
+
+      /* LCD feedback: only redraw when mode or state changes */
+      if (mode != prev_mode || state != prev_state)
+      {
+          char *state_str = (state == STATE_STOP)    ? "STOP   " :
+                            (state == STATE_OPENING) ? "OPENING" :
+                                                        "CLOSING";
+
+          LCD_Clear();
+          LCD_SetCursor(0, 0);
+          LCD_Print((mode == MODE_MANUAL) ? "Mode: MANUAL" : "Mode: AUTO  ");
+          LCD_SetCursor(1, 0);
+          LCD_Print("State: ");
+          LCD_Print(state_str);
+
+          prev_mode  = mode;
+          prev_state = state;
+      }
 
       /* UART debug output */
       snprintf(msg, sizeof(msg),
