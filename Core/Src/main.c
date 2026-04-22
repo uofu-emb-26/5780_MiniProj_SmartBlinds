@@ -136,7 +136,12 @@ int main(void)
 
     while (1)
   {
-      uint16_t light = ADC_Read();
+    uint16_t light = 0;
+    for (int i = 0; i < 5; i++)
+     {
+        light += ADC_Read();
+     }
+     light /= 5;
 
       uint8_t motion_btn = ((GPIOB->IDR & GPIO_IDR_0) == 0); // PB0
       uint8_t stop_btn   = ((GPIOB->IDR & GPIO_IDR_2) == 0); // PB2
