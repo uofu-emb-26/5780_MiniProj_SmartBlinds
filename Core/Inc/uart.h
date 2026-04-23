@@ -3,7 +3,7 @@
 
 #include "main.h"
 
-void UART2_Init_Custom(void);
-void UART2_SendString(const char *s);
+void UART3_Init_Custom(void);
+void UART3_SendString(const char *s);
 
 #endif

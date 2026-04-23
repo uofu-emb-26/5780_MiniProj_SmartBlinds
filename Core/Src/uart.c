@@ -1,6 +1,6 @@
 #include "uart.h"
 
-void UART2_Init_Custom(void)
+void UART3_Init_Custom(void)
 {
     __HAL_RCC_GPIOC_CLK_ENABLE();
     __HAL_RCC_USART3_CLK_ENABLE();
@@ -17,7 +17,7 @@ void UART2_Init_Custom(void)
     USART3->CR1 |= USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
 }
 
-void UART2_SendString(const char *s)
+void UART3_SendString(const char *s)
 {
     while (*s)
     {
