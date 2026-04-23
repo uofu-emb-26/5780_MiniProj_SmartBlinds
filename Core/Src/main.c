@@ -76,10 +76,10 @@ int main(void)
     GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR0_Msk | GPIO_PUPDR_PUPDR2_Msk);
     GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR0_0 | GPIO_PUPDR_PUPDR2_0); // pull-up
 
-    // PB10, PB11 -> Limit Switches
-    GPIOB->MODER &= ~(GPIO_MODER_MODER10_Msk | GPIO_MODER_MODER11_Msk);
-    GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR10_Msk | GPIO_PUPDR_PUPDR11_Msk);
-    GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR10_0 | GPIO_PUPDR_PUPDR11_0); // pull-up
+    // PB10, PB11 -> Limit Switches (disabled for now)
+    // GPIOB->MODER &= ~(GPIO_MODER_MODER10_Msk | GPIO_MODER_MODER11_Msk);
+    // GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR10_Msk | GPIO_PUPDR_PUPDR11_Msk);
+    // GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR10_0 | GPIO_PUPDR_PUPDR11_0); // pull-up
 
     // PA6 -> PWM (TIM3_CH1 alternate function)
     GPIOA->MODER &= ~GPIO_MODER_MODER6_Msk;
@@ -98,11 +98,7 @@ int main(void)
     TIM3->CCER = TIM_CCER_CC1E;  // enable CH1 output
     TIM3->CR1  = TIM_CR1_CEN;    // start timer
 
-    // PA2/PA3 -> UART2
-    GPIOA->MODER &= ~(GPIO_MODER_MODER2_Msk | GPIO_MODER_MODER3_Msk);
-    GPIOA->MODER |= (GPIO_MODER_MODER2_1 | GPIO_MODER_MODER3_1); // alternate function
-    GPIOA->AFR[0] &= ~((0xF << (2 * 4)) | (0xF << (3 * 4)));
-    GPIOA->AFR[0] |=  ((1 << (2 * 4)) | (1 << (3 * 4))); // AF1 USART2
+    // UART pins configured inside UART2_Init_Custom (PC4/PC5 -> USART3)
 
     // PB6/PB7 -> I2C1
     GPIOB->MODER &= ~(GPIO_MODER_MODER6_Msk | GPIO_MODER_MODER7_Msk);
@@ -144,8 +140,8 @@ int main(void)
       uint8_t motion_btn = ((GPIOB->IDR & GPIO_IDR_0) == 0); // PB0
       uint8_t stop_btn   = ((GPIOB->IDR & GPIO_IDR_2) == 0); // PB2
 
-      uint8_t open_limit  = ((GPIOB->IDR & GPIO_IDR_10) == 0);
-      uint8_t close_limit = ((GPIOB->IDR & GPIO_IDR_11) == 0);
+      uint8_t open_limit  = 0; // limit switches disabled
+      uint8_t close_limit = 0;
 
       uint8_t user_btn = ((USER_BTN_PORT->IDR & USER_BTN_PIN) != 0);
 
