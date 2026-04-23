@@ -51,7 +51,7 @@ int main(void)
     __HAL_RCC_I2C1_CLK_ENABLE();
 
     ADC_Init_Custom();
-    UART2_Init_Custom();
+    UART3_Init_Custom();
 
     /* LED pins PC6-PC9 as outputs */
     GPIOC->MODER &= ~(GPIO_MODER_MODER6_Msk | GPIO_MODER_MODER7_Msk |
@@ -98,7 +98,7 @@ int main(void)
     TIM3->CCER = TIM_CCER_CC1E;  // enable CH1 output
     TIM3->CR1  = TIM_CR1_CEN;    // start timer
 
-    // UART pins configured inside UART2_Init_Custom (PC4/PC5 -> USART3)
+    // UART pins configured inside UART3_Init_Custom (PC4/PC5 -> USART3)
 
     // PB6/PB7 -> I2C1
     GPIOB->MODER &= ~(GPIO_MODER_MODER6_Msk | GPIO_MODER_MODER7_Msk);
@@ -154,7 +154,7 @@ int main(void)
                   "Mode changed: %s\r\n",
                   (mode == MODE_MANUAL) ? "MANUAL" : "AUTO");
 
-          UART2_SendString(msg);
+          UART3_SendString(msg);
 
           HAL_Delay(250); // simple debounce
       }
@@ -275,7 +275,7 @@ int main(void)
               (mode == MODE_MANUAL) ? "MANUAL" : "AUTO",
               state, light, user_btn, motion_btn, stop_btn, open_limit, close_limit);
 
-      UART2_SendString(msg);
+      UART3_SendString(msg);
       HAL_Delay(200);
   }
 }
