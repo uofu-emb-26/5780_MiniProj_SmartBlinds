@@ -13,12 +13,21 @@ typedef enum {
   STATE_STOP,
   STATE_OPENING,
   STATE_CLOSING
-  } State_t;
+} State_t;
 
-  typedef enum {
-    MODE_MANUAL,
-    MODE_AUTO
+typedef enum {
+  MODE_MANUAL,
+  MODE_AUTO
 } Mode_t;
+
+typedef enum {
+  POS_UNKNOWN,
+  POS_OPEN,
+  POS_CLOSED
+} Position_t;
+
+/* How long (ms) the motor runs to fully open or close — tune this. */
+#define MOTOR_RUN_MS 5000U
 /* USER BUTTON PIN - onboard B1 on STM32F0-Discovery, active-HIGH */
 #define USER_BTN_PORT GPIOA
 #define USER_BTN_PIN  GPIO_IDR_0
@@ -123,6 +132,9 @@ int main(void)
     uint8_t last_stop_btn = 0;   // edge detection for emergency stop (PB11)
     uint8_t emergency = 0;       // latched emergency stop — never clears until reboot
 
+    Position_t position = POS_UNKNOWN;       // last known blind position
+    uint32_t   state_entered_at = HAL_GetTick(); // when the current state began
+
     /* Sentinel values so the first iteration always refreshes the LCD */
     Mode_t  prev_mode  = (Mode_t)0xFF;
     State_t prev_state = (State_t)0xFF;
@@ -142,9 +154,6 @@ int main(void)
       uint8_t stop_edge = stop_btn && !last_stop_btn;
       last_stop_btn = stop_btn;
       if (stop_edge) emergency = 1;
-
-      uint8_t open_limit  = 0; // limit switches disabled
-      uint8_t close_limit = 0;
 
       uint8_t user_btn = ((USER_BTN_PORT->IDR & USER_BTN_PIN) != 0);
 
@@ -167,6 +176,10 @@ int main(void)
       uint8_t motion_edge = motion_btn && !last_motion_btn;
       last_motion_btn = motion_btn;
 
+      /* Snapshot state at top of FSM so we can detect transitions for timer */
+      State_t state_before_fsm = state;
+      uint32_t elapsed = HAL_GetTick() - state_entered_at;
+
       /* FSM transition logic
        * (PB11 stop button is handled below via the emergency latch only) */
       switch (state)
@@ -174,36 +187,56 @@ int main(void)
           case STATE_STOP:
               if (mode == MODE_MANUAL)
               {
-                  if (motion_edge && !open_limit)
+                  if (motion_edge && position != POS_OPEN)
                       state = STATE_OPENING;
+                  else if (motion_edge && position == POS_OPEN)
+                      state = STATE_CLOSING;
               }
-              else // AUTO mode: bright -> open, dark -> close
+              else // AUTO mode: bright -> open, dark -> close (only if not already there)
               {
-                  if (bright && !open_limit)
+                  if (bright && position != POS_OPEN)
                       state = STATE_OPENING;
-                  else if (dark && !close_limit)
+                  else if (dark && position != POS_CLOSED)
                       state = STATE_CLOSING;
               }
               break;
 
           case STATE_OPENING:
-              if (open_limit)
+              if (elapsed >= MOTOR_RUN_MS)
+              {
                   state = STATE_STOP;
-              else if (mode == MODE_MANUAL && motion_edge && !close_limit)
+                  position = POS_OPEN;
+              }
+              else if (mode == MODE_MANUAL && motion_edge)
+              {
                   state = STATE_CLOSING;
-              else if (mode == MODE_AUTO && dark && !close_limit)
+              }
+              else if (mode == MODE_AUTO && dark)
+              {
                   state = STATE_CLOSING;
+              }
               break;
 
           case STATE_CLOSING:
-              if (close_limit)
+              if (elapsed >= MOTOR_RUN_MS)
+              {
                   state = STATE_STOP;
-              else if (mode == MODE_MANUAL && motion_edge && !open_limit)
+                  position = POS_CLOSED;
+              }
+              else if (mode == MODE_MANUAL && motion_edge)
+              {
                   state = STATE_OPENING;
-              else if (mode == MODE_AUTO && bright && !open_limit)
+              }
+              else if (mode == MODE_AUTO && bright)
+              {
                   state = STATE_OPENING;
+              }
               break;
       }
+
+      /* Restart the timer whenever state changes */
+      if (state != state_before_fsm)
+          state_entered_at = HAL_GetTick();
 
       /* Emergency override: once PB11 is pressed once, state is forced STOP forever */
       if (emergency) state = STATE_STOP;
@@ -271,9 +304,9 @@ int main(void)
       uint8_t pa9    = (GPIOA->ODR >> 9) & 1;
 
       snprintf(msg, sizeof(msg),
-              "Mode=%s State=%d Bright=%u Dark=%u UserBtn=%u MotionBtn=%u StopBtn=%u Emerg=%u PWM=%u PA5=%u PA9=%u\r\n",
+              "Mode=%s State=%d Pos=%d Bright=%u Dark=%u UserBtn=%u MotionBtn=%u StopBtn=%u Emerg=%u PWM=%u PA5=%u PA9=%u\r\n",
               (mode == MODE_MANUAL) ? "MANUAL" : "AUTO",
-              state, bright, dark, user_btn, motion_btn, stop_btn, emergency,
+              state, position, bright, dark, user_btn, motion_btn, stop_btn, emergency,
               pwm_on, pa5, pa9);
 
       UART3_SendString(msg);
