@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <string.h>
 #include "motor.h"
-#include "adc.h"
 #include "uart.h"
 #include "lcd.h"
 
@@ -24,12 +23,10 @@ typedef enum {
 #define USER_BTN_PORT GPIOA
 #define USER_BTN_PIN  GPIO_IDR_0
 
-/* LIGHT THRESHOLDS (can be changed)
- * Higher ADC value = brighter light
- * Bright (above 700) -> open blinds
- * Dark  (below 400)  -> close blinds */
-#define LIGHT_OPEN_THRESHOLD   700
-#define LIGHT_CLOSE_THRESHOLD  400
+/* LIGHT SENSOR (digital module with DO pin)
+ * PA1 reads the sensor's DO output. Threshold is set by the pot on the module.
+ * LM393-based modules typically output LOW when bright, HIGH when dark.
+ * If AUTO mode feels inverted, swap '== 0' and '!= 0' in the read below. */
 
 /* Discovery board LEDs: PC6=RED, PC7=BLUE, PC8=ORANGE, PC9=GREEN */
 #define LED_RED_PIN    (1U << 6)
@@ -50,7 +47,6 @@ int main(void)
     __HAL_RCC_TIM3_CLK_ENABLE();
     __HAL_RCC_I2C1_CLK_ENABLE();
 
-    ADC_Init_Custom();
     UART3_Init_Custom();
 
     /* LED pins PC6-PC9 as outputs */
@@ -64,7 +60,9 @@ int main(void)
     GPIOA->MODER &= ~GPIO_MODER_MODER0_Msk; // input
     GPIOA->PUPDR &= ~GPIO_PUPDR_PUPDR0_Msk; // no pull (board has external pull-down)
 
-    // PA1 -> Light Sensor (ADC) - configured in ADC_Init_Custom
+    // PA1 -> Light Sensor DO (digital input)
+    GPIOA->MODER &= ~GPIO_MODER_MODER1_Msk;   // input
+    GPIOA->PUPDR &= ~GPIO_PUPDR_PUPDR1_Msk;   // no pull (module has push-pull output)
 
     // PA7 -> DIR output
     GPIOA->MODER &= ~GPIO_MODER_MODER7_Msk;
@@ -130,12 +128,9 @@ int main(void)
 
     while (1)
   {
-    uint16_t light = 0;
-    for (int i = 0; i < 5; i++)
-     {
-        light += ADC_Read();
-     }
-     light /= 5;
+      /* Digital light sensor: LOW = bright, HIGH = dark */
+      uint8_t bright = ((GPIOA->IDR & GPIO_IDR_1) == 0);
+      uint8_t dark   = !bright;
 
       uint8_t motion_btn = ((GPIOB->IDR & GPIO_IDR_0) == 0); // PB0
       uint8_t stop_btn   = ((GPIOB->IDR & GPIO_IDR_2) == 0); // PB2
@@ -186,11 +181,11 @@ int main(void)
               }
               else // AUTO mode: bright -> open, dark -> close
               {
-                  if ((light > LIGHT_OPEN_THRESHOLD) && !open_limit)
+                  if (bright && !open_limit)
                   {
                       state = STATE_OPENING;
                   }
-                  else if ((light < LIGHT_CLOSE_THRESHOLD) && !close_limit)
+                  else if (dark && !close_limit)
                   {
                       state = STATE_CLOSING;
                   }
@@ -199,16 +194,16 @@ int main(void)
 
           case STATE_OPENING:
               if (stop_btn || open_limit)
-              {
                   state = STATE_STOP;
-              }
+              else if (mode == MODE_AUTO && dark && !close_limit)
+                  state = STATE_CLOSING;
               break;
 
           case STATE_CLOSING:
               if (stop_btn || close_limit)
-              {
                   state = STATE_STOP;
-              }
+              else if (mode == MODE_AUTO && bright && !open_limit)
+                  state = STATE_OPENING;
               break;
       }
 
@@ -271,9 +266,9 @@ int main(void)
 
       /* UART debug output */
       snprintf(msg, sizeof(msg),
-              "Mode=%s State=%d Light=%u UserBtn=%u MotionBtn=%u StopBtn=%u OpenLim=%u CloseLim=%u\r\n",
+              "Mode=%s State=%d Bright=%u Dark=%u UserBtn=%u MotionBtn=%u StopBtn=%u\r\n",
               (mode == MODE_MANUAL) ? "MANUAL" : "AUTO",
-              state, light, user_btn, motion_btn, stop_btn, open_limit, close_limit);
+              state, bright, dark, user_btn, motion_btn, stop_btn);
 
       UART3_SendString(msg);
       HAL_Delay(200);
