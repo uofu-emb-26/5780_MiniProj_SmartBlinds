@@ -70,11 +70,11 @@ int main(void)
     GPIOA->OTYPER &= ~((1 << 5) | (1 << 9));
     GPIOA->ODR &= ~((1 << 5) | (1 << 9));
 
-    // PB0: Manual Open/Close command button
-    // PB2: Stop button
-    GPIOB->MODER &= ~(GPIO_MODER_MODER0_Msk | GPIO_MODER_MODER2_Msk);
-    GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR0_Msk | GPIO_PUPDR_PUPDR2_Msk);
-    GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR0_0 | GPIO_PUPDR_PUPDR2_0); // pull-up
+    // PB2: Manual Open/Close motion button (active-LOW)
+    // PB11: Stop button (active-LOW)
+    GPIOB->MODER &= ~(GPIO_MODER_MODER2_Msk | GPIO_MODER_MODER11_Msk);
+    GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR2_Msk | GPIO_PUPDR_PUPDR11_Msk);
+    GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR2_0 | GPIO_PUPDR_PUPDR11_0); // pull-up
 
     // PB10, PB11 -> Limit Switches (disabled for now)
     // GPIOB->MODER &= ~(GPIO_MODER_MODER10_Msk | GPIO_MODER_MODER11_Msk);
@@ -118,8 +118,9 @@ int main(void)
     State_t state = STATE_STOP;
     Mode_t mode = MODE_MANUAL;
 
-    uint8_t last_user_btn = 0; // active-high button, released = 0
-    uint8_t motion_toggle = 0; // 0 -> next press opens, 1 -> next press closes
+    uint8_t last_user_btn = 0;   // active-high user button, released = 0
+    uint8_t last_motion_btn = 0; // edge detection for motion button (PB2)
+    uint8_t emergency = 0;       // latched emergency stop (PB11) — never clears
 
     /* Sentinel values so the first iteration always refreshes the LCD */
     Mode_t  prev_mode  = (Mode_t)0xFF;
@@ -133,8 +134,11 @@ int main(void)
       uint8_t bright = ((GPIOA->IDR & GPIO_IDR_1) == 0);
       uint8_t dark   = !bright;
 
-      uint8_t motion_btn = ((GPIOB->IDR & GPIO_IDR_0) == 0); // PB0
-      uint8_t stop_btn   = ((GPIOB->IDR & GPIO_IDR_2) == 0); // PB2
+      uint8_t motion_btn = ((GPIOB->IDR & GPIO_IDR_2) == 0);  // PB2 (motion)
+      uint8_t stop_btn   = ((GPIOB->IDR & GPIO_IDR_11) == 0); // PB11 (emergency stop)
+
+      /* Latch emergency on first press — never clears until reboot */
+      if (stop_btn) emergency = 1;
 
       uint8_t open_limit  = 0; // limit switches disabled
       uint8_t close_limit = 0;
@@ -156,6 +160,10 @@ int main(void)
       }
       last_user_btn = user_btn;
 
+      /* Rising-edge detect on motion button so each press triggers once */
+      uint8_t motion_edge = motion_btn && !last_motion_btn;
+      last_motion_btn = motion_btn;
+
       /* FSM transition logic */
       switch (state)
       {
@@ -166,36 +174,24 @@ int main(void)
               }
               else if (mode == MODE_MANUAL)
               {
-                  if (motion_btn)
-                  {
-                      if (!motion_toggle && !open_limit)
-                      {
-                          state = STATE_OPENING;
-                          motion_toggle = 1;
-                      }
-                      else if (motion_toggle && !close_limit)
-                      {
-                          state = STATE_CLOSING;
-                          motion_toggle = 0;
-                      }
-                  }
+                  // First manual press from STOP -> OPEN
+                  if (motion_edge && !open_limit)
+                      state = STATE_OPENING;
               }
               else // AUTO mode: bright -> open, dark -> close
               {
                   if (bright && !open_limit)
-                  {
                       state = STATE_OPENING;
-                  }
                   else if (dark && !close_limit)
-                  {
                       state = STATE_CLOSING;
-                  }
               }
               break;
 
           case STATE_OPENING:
               if (stop_btn || open_limit)
                   state = STATE_STOP;
+              else if (mode == MODE_MANUAL && motion_edge && !close_limit)
+                  state = STATE_CLOSING;
               else if (mode == MODE_AUTO && dark && !close_limit)
                   state = STATE_CLOSING;
               break;
@@ -203,10 +199,15 @@ int main(void)
           case STATE_CLOSING:
               if (stop_btn || close_limit)
                   state = STATE_STOP;
+              else if (mode == MODE_MANUAL && motion_edge && !open_limit)
+                  state = STATE_OPENING;
               else if (mode == MODE_AUTO && bright && !open_limit)
                   state = STATE_OPENING;
               break;
       }
+
+      /* Emergency override: once latched, state is forced to STOP forever */
+      if (emergency) state = STATE_STOP;
 
       /* FSM output logic */
       switch (state)
