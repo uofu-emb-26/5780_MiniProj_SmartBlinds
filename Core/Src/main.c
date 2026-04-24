@@ -120,7 +120,8 @@ int main(void)
 
     uint8_t last_user_btn = 0;   // active-high user button, released = 0
     uint8_t last_motion_btn = 0; // edge detection for motion button (PB2)
-    uint8_t emergency = 0;       // latched emergency stop (PB11) — never clears
+    uint8_t last_stop_btn = 0;   // edge detection for emergency stop (PB11)
+    uint8_t emergency = 0;       // latched emergency stop — never clears until reboot
 
     /* Sentinel values so the first iteration always refreshes the LCD */
     Mode_t  prev_mode  = (Mode_t)0xFF;
@@ -137,8 +138,10 @@ int main(void)
       uint8_t motion_btn = ((GPIOB->IDR & GPIO_IDR_2) == 0);  // PB2 (motion)
       uint8_t stop_btn   = ((GPIOB->IDR & GPIO_IDR_11) == 0); // PB11 (emergency stop)
 
-      /* Latch emergency on first press — never clears until reboot */
-      if (stop_btn) emergency = 1;
+      /* Latch emergency only on rising edge of stop_btn (real press, not noise) */
+      uint8_t stop_edge = stop_btn && !last_stop_btn;
+      last_stop_btn = stop_btn;
+      if (stop_edge) emergency = 1;
 
       uint8_t open_limit  = 0; // limit switches disabled
       uint8_t close_limit = 0;
@@ -164,17 +167,13 @@ int main(void)
       uint8_t motion_edge = motion_btn && !last_motion_btn;
       last_motion_btn = motion_btn;
 
-      /* FSM transition logic */
+      /* FSM transition logic
+       * (PB11 stop button is handled below via the emergency latch only) */
       switch (state)
       {
           case STATE_STOP:
-              if (stop_btn)
+              if (mode == MODE_MANUAL)
               {
-                  state = STATE_STOP;
-              }
-              else if (mode == MODE_MANUAL)
-              {
-                  // First manual press from STOP -> OPEN
                   if (motion_edge && !open_limit)
                       state = STATE_OPENING;
               }
@@ -188,7 +187,7 @@ int main(void)
               break;
 
           case STATE_OPENING:
-              if (stop_btn || open_limit)
+              if (open_limit)
                   state = STATE_STOP;
               else if (mode == MODE_MANUAL && motion_edge && !close_limit)
                   state = STATE_CLOSING;
@@ -197,7 +196,7 @@ int main(void)
               break;
 
           case STATE_CLOSING:
-              if (stop_btn || close_limit)
+              if (close_limit)
                   state = STATE_STOP;
               else if (mode == MODE_MANUAL && motion_edge && !open_limit)
                   state = STATE_OPENING;
@@ -206,7 +205,7 @@ int main(void)
               break;
       }
 
-      /* Emergency override: once latched, state is forced to STOP forever */
+      /* Emergency override: once PB11 is pressed once, state is forced STOP forever */
       if (emergency) state = STATE_STOP;
 
       /* FSM output logic */
@@ -272,13 +271,13 @@ int main(void)
       uint8_t pa9    = (GPIOA->ODR >> 9) & 1;
 
       snprintf(msg, sizeof(msg),
-              "Mode=%s State=%d Bright=%u Dark=%u UserBtn=%u MotionBtn=%u StopBtn=%u PWM=%u PA5=%u PA9=%u\r\n",
+              "Mode=%s State=%d Bright=%u Dark=%u UserBtn=%u MotionBtn=%u StopBtn=%u Emerg=%u PWM=%u PA5=%u PA9=%u\r\n",
               (mode == MODE_MANUAL) ? "MANUAL" : "AUTO",
-              state, bright, dark, user_btn, motion_btn, stop_btn,
+              state, bright, dark, user_btn, motion_btn, stop_btn, emergency,
               pwm_on, pa5, pa9);
 
       UART3_SendString(msg);
-      HAL_Delay(200);
+      HAL_Delay(50);
   }
 }
 
