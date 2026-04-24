@@ -44,7 +44,7 @@ int main(void)
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
     __HAL_RCC_GPIOC_CLK_ENABLE();
-    __HAL_RCC_TIM3_CLK_ENABLE();
+    __HAL_RCC_TIM14_CLK_ENABLE();
     __HAL_RCC_I2C1_CLK_ENABLE();
 
     UART3_Init_Custom();
@@ -64,9 +64,11 @@ int main(void)
     GPIOA->MODER &= ~GPIO_MODER_MODER1_Msk;   // input
     GPIOA->PUPDR &= ~GPIO_PUPDR_PUPDR1_Msk;   // no pull (module has push-pull output)
 
-    // PA7 -> DIR output
-    GPIOA->MODER &= ~GPIO_MODER_MODER7_Msk;
-    GPIOA->MODER |= GPIO_MODER_MODER7_0;
+    // PA5 -> IN_1, PA9 -> IN_2 (motor direction outputs)
+    GPIOA->MODER &= ~(GPIO_MODER_MODER5_Msk | GPIO_MODER_MODER9_Msk);
+    GPIOA->MODER |= (GPIO_MODER_MODER5_0 | GPIO_MODER_MODER9_0);
+    GPIOA->OTYPER &= ~((1 << 5) | (1 << 9));
+    GPIOA->ODR &= ~((1 << 5) | (1 << 9));
 
     // PB0: Manual Open/Close command button
     // PB2: Stop button
@@ -79,22 +81,21 @@ int main(void)
     // GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR10_Msk | GPIO_PUPDR_PUPDR11_Msk);
     // GPIOB->PUPDR |= (GPIO_PUPDR_PUPDR10_0 | GPIO_PUPDR_PUPDR11_0); // pull-up
 
-    // PA6 -> PWM (TIM3_CH1 alternate function)
-    GPIOA->MODER &= ~GPIO_MODER_MODER6_Msk;
-    GPIOA->MODER |= GPIO_MODER_MODER6_1; // alternate function
-    GPIOA->AFR[0] &= ~(0xF << (6 * 4));
-    GPIOA->AFR[0] |= (1 << (6 * 4)); // AF1 for TIM3_CH1 on many F0 parts
+    // PA4 -> PWM (TIM14_CH1 alternate function, AF4)
+    GPIOA->MODER &= ~GPIO_MODER_MODER4_Msk;
+    GPIOA->MODER |= GPIO_MODER_MODER4_1; // alternate function
+    GPIOA->AFR[0] &= ~(0xF << (4 * 4));
+    GPIOA->AFR[0] |= (4 << (4 * 4)); // AF4 for TIM14_CH1
 
-    /* TIM3 CH1 PWM setup
+    /* TIM14 CH1 PWM (PA4) — motor speed PWM
      * HSI = 8 MHz, PSC = 7 -> timer counts at 1 MHz
-     * ARR = 999 -> 1 kHz PWM frequency (1 MHz / 1000)
-     * motor_open/close set CCR1 to control duty cycle */
-    TIM3->PSC  = 7;       // 8 MHz / (7+1) = 1 MHz tick
-    TIM3->ARR  = 999;     // 1 MHz / (999+1) = 1 kHz PWM
-    TIM3->CCR1 = 0;       // start with 0% duty (motor off)
-    TIM3->CCMR1 = (6 << TIM_CCMR1_OC1M_Pos) | TIM_CCMR1_OC1PE; // PWM mode 1 + preload
-    TIM3->CCER = TIM_CCER_CC1E;  // enable CH1 output
-    TIM3->CR1  = TIM_CR1_CEN;    // start timer
+     * ARR = 999 -> 1 kHz PWM (1 MHz / 1000) */
+    TIM14->PSC  = 7;
+    TIM14->ARR  = 999;
+    TIM14->CCR1 = 0;
+    TIM14->CCMR1 = (6 << TIM_CCMR1_OC1M_Pos) | TIM_CCMR1_OC1PE;
+    TIM14->CCER = TIM_CCER_CC1E;
+    TIM14->CR1  = TIM_CR1_CEN;
 
     // UART pins configured inside UART3_Init_Custom (PC4/PC5 -> USART3)
 
@@ -265,10 +266,15 @@ int main(void)
       }
 
       /* UART debug output */
+      uint8_t pwm_on = (TIM14->CCR1 != 0);
+      uint8_t pa5    = (GPIOA->ODR >> 5) & 1;
+      uint8_t pa9    = (GPIOA->ODR >> 9) & 1;
+
       snprintf(msg, sizeof(msg),
-              "Mode=%s State=%d Bright=%u Dark=%u UserBtn=%u MotionBtn=%u StopBtn=%u\r\n",
+              "Mode=%s State=%d Bright=%u Dark=%u UserBtn=%u MotionBtn=%u StopBtn=%u PWM=%u PA5=%u PA9=%u\r\n",
               (mode == MODE_MANUAL) ? "MANUAL" : "AUTO",
-              state, bright, dark, user_btn, motion_btn, stop_btn);
+              state, bright, dark, user_btn, motion_btn, stop_btn,
+              pwm_on, pa5, pa9);
 
       UART3_SendString(msg);
       HAL_Delay(200);
