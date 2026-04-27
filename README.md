@@ -36,6 +36,9 @@ This project implements an automatic blind system using an STM32 microcontroller
 - IN1 (PA5), IN2 (PA9): Control motor direction (open/close)
 - LCD (PB6, PB7): I2C communication (SCL, SDA) for displaying mode and state
 - UART (PC4, PC5): Sends debugging information to a computer
+- NOTE:
+  - All grounds (GND) must be connected together
+  - Motor driver powered separately if needed
 
 ## System Operation
 - **Manual Mode**:
