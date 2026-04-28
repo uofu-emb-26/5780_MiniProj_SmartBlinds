@@ -5,11 +5,11 @@ Automatic Blind Opener Depending On Daylight/Night
 Matthew Lee and Sean Moon
 
 ## Overview
-This project implements an automatic blind system using an STM32 microcontroller. The system can operate in both **manual mode** (user-controlled) and **automatic mode** (light-based), opening or closing blinds depending on ambient lighting conditions.
+This project implements an automatic blind system using an STM32 microcontroller. The system can operate in both **manual mode** (user-controlled) and **automatic mode** (depending whether its daylight/night), opening or closing blinds depending on ambient lighting conditions.
 
 ## Features
 - Manual open/close control using external buttons  
-- Automatic control based on daylight (light sensor)  
+- Automatic control based on time of day (light sensor)  
 - Mode switching using the STM32 USER button  
 - PWM-based motor control  
 - LCD display via I2C (real-time status)  
