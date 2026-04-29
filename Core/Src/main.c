@@ -27,7 +27,7 @@ typedef enum {
 } Position_t;
 
 /* How long (ms) the motor runs to fully open or close — tune this. */
-#define MOTOR_RUN_MS 5000U
+#define MOTOR_RUN_MS 6000U
 /* USER BUTTON PIN - onboard B1 on STM32F0-Discovery, active-HIGH */
 #define USER_BTN_PORT GPIOA
 #define USER_BTN_PIN  GPIO_IDR_0
