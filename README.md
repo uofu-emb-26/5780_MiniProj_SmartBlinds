@@ -18,9 +18,9 @@ This project implements an automatic blind system using an STM32 microcontroller
 
 ## System Architecture
 
-![FSM](fsm.jpeg)
-![systemfsm](systemfsm.jpeg)
-![systems](systems.jpeg)
+![FSM](images/fsm.jpeg)
+![systemfsm](images/systemfsm.jpeg)
+![systems](images/systems.jpeg)
 
 ### States (FSM)
 - STOP  
